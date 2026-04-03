@@ -1036,7 +1036,7 @@ class_name SkillData
 
 ### 8.1 节点命名约定
 
-```gdscript
+``gdscript
 【前缀规范】
 - 2D 节点：不加前缀，使用具体类型名
 - 容器节点：xxxContainer
@@ -1057,7 +1057,7 @@ class_name SkillData
 
 ### 8.2 图层和分组
 
-```gdscript
+``gdscript
 // 碰撞层定义（Physics Layer 2D）
 Layer 1: Static Environment (静态环境)
 Layer 2: Enemies (敌人)
@@ -1144,7 +1144,7 @@ AnimatedSprite2D 动画管理：
 
 ## 十、场景切换流程
 
-```gdscript
+``gdscript
 # 2D 场景加载流程图
 
 当前场景 (Current Scene)
@@ -1166,7 +1166,286 @@ AnimatedSprite2D 动画管理：
 
 ---
 
-*文档版本：v1.0 (2D 版)*  
+## 四、信号连接完整性
+
+### 4.1 EventBus 全局信号定义
+
+``gdscript
+# EventBus.gd - 全局事件总线
+extends Node
+
+# ============ 玩家相关信号 ============
+signal player_spawned(player: CharacterBody2D)
+signal player_died()
+signal player_respawned()
+signal player_level_up(new_level: int)
+signal player_stats_changed(stat_type: String, new_value: float)
+signal player_hp_changed(current: float, max: float)
+signal player_mp_changed(current: float, max: float)
+signal player_exp_gained(amount: float)
+signal player_gold_changed(total: int)
+
+# ============ 战斗相关信号 ============
+signal combat_started(enemy: Enemy)
+signal combat_ended(victory: bool)
+signal damage_dealt(damage: float, is_critical: bool)
+signal damage_taken(damage: float, source: Node)
+signal enemy_defeated(enemy_id: String, exp_reward: float, gold_reward: int)
+signal skill_used(skill_id: String, target: Node)
+signal buff_applied(buff_id: String, target: Node, duration: float)
+signal debuff_applied(debuff_id: String, target: Node, duration: float)
+
+# ============ 物品相关信号 ============
+signal item_picked_up(item_id: String, quantity: int)
+signal item_dropped(item_id: String, position: Vector2)
+signal item_equipped(slot: String, item_id: String)
+signal item_consumed(item_id: String)
+signal loot_generated(loot_table: String, position: Vector2)
+
+# ============ UI 相关信号 ============
+signal ui_window_opened(window_name: String)
+signal ui_window_closed(window_name: String)
+signal ui_button_pressed(button_id: String)
+signal ui_inventory_changed()
+signal ui_quest_updated(quest_id: String)
+signal ui_notification(message: String, type: String)
+
+# ============ 游戏流程相关信号 ============
+signal game_state_changed(old_state: String, new_state: String)
+signal scene_loaded(scene_name: String)
+signal scene_unloaded()
+signal checkpoint_reached(checkpoint_id: String)
+signal quest_completed(quest_id: String)
+signal achievement_unlocked(achievement_id: String)
+
+# ============ 音频相关信号 ============
+signal bgm_changed(bgm_id: String)
+signal sfx_played(sfx_id: String)
+signal audio_volume_changed(bus_name: String, volume: float)
+```
+
+### 4.2 核心信号连接关系图
+
+```
+graph TB
+    Player -->|player_died| EventBus
+    EventBus -->|player_died| UIManager
+    EventBus -->|player_died| AudioManager
+    EventBus -->|player_died| EnemyManager
+    
+    Player -->|damage_dealt| EventBus
+    EventBus -->|damage_dealt| DamageMeter
+    EventBus -->|damage_dealt| UIManager
+    
+    EnemyManager -->|enemy_defeated| EventBus
+    EventBus -->|enemy_defeated| Player
+    EventBus -->|enemy_defeated| QuestSystem
+    EventBus -->|enemy_defeated| AchievementSystem
+    
+    ItemManager -->|item_picked_up| EventBus
+    EventBus -->|item_picked_up| UIManager
+    EventBus -->|item_picked_up| InventorySystem
+    
+    UIManager -->|ui_button_pressed| EventBus
+    EventBus -->|ui_button_pressed| GameManager
+    EventBus -->|ui_button_pressed| SkillSystem
+```
+
+### 4.3 关键组件信号连接详情
+
+#### 玩家组件的信号连接
+
+``gdscript
+# Player.gd 中的信号连接
+func _ready():
+    # 连接到全局事件
+    EventBus.player_level_up.connect(_on_level_up)
+    EventBus.player_stats_changed.connect(_on_stats_changed)
+    
+    # 发出玩家生成信号
+    EventBus.player_spawned.emit(self)
+
+func take_damage(amount: float, source: Node):
+    # 处理伤害...
+    
+    # 发出受伤信号
+    EventBus.damage_taken.emit(amount, source)
+    EventBus.player_hp_changed.emit(stats.hp_current, stats.hp_max)
+    
+    if stats.hp_current <= 0:
+        die()
+
+func die():
+    # 死亡逻辑...
+    EventBus.player_died.emit()
+
+func gain_exp(amount: float):
+    # 获得经验...
+    EventBus.player_exp_gained.emit(amount)
+    
+    if should_level_up():
+        level_up()
+
+func level_up():
+    # 升级逻辑...
+    EventBus.player_level_up.emit(stats.level)
+    EventBus.player_stats_changed.emit("level", stats.level)
+```
+
+#### UI 组件的信号连接
+
+``gdscript
+# UIManager.gd 中的信号连接
+func _ready():
+    # 监听玩家状态
+    EventBus.player_hp_changed.connect(_update_health_bar)
+    EventBus.player_mp_changed.connect(_update_mana_bar)
+    EventBus.player_level_up.connect(_show_level_up_effect)
+    EventBus.player_gold_changed.connect(_update_gold_display)
+    
+    # 监听战斗
+    EventBus.damage_dealt.connect(_show_damage_number)
+    EventBus.enemy_defeated.connect(_show_kill_feedback)
+    
+    # 监听物品
+    EventBus.item_picked_up.connect(_show_pickup_notification)
+    EventBus.item_equipped.connect(_update_equipment_display)
+    
+    # 监听 UI 事件
+    EventBus.ui_window_opened.connect(_on_window_opened)
+    EventBus.ui_window_closed.connect(_on_window_closed)
+
+func _update_health_bar(current: float, max: float):
+    $HUD.HealthOrb.value = current / max * 100.0
+
+func _show_damage_number(damage: float, is_critical: bool):
+    var damage_text = preload("res://scenes/ui/DamageText.tscn").instantiate()
+    damage_text.setup(damage, is_critical)
+    add_child(damage_text)
+```
+
+#### 敌人管理器的信号连接
+
+``gdscript
+# EnemyManager.gd 中的信号连接
+func _ready():
+    # 监听玩家死亡
+    EventBus.player_died.connect(_on_player_died)
+    
+    # 监听敌人死亡
+    for enemy in get_enemies():
+        enemy.enemy_died.connect(_on_enemy_died)
+
+func _on_enemy_died(enemy: Enemy):
+    # 计算奖励
+    var exp_reward = calculate_exp_reward(enemy)
+    var gold_reward = calculate_gold_reward(enemy)
+    
+    # 发出敌人击败信号
+    EventBus.enemy_defeated.emit(enemy.enemy_id, exp_reward, gold_reward)
+    
+    # 通知任务系统
+    QuestSystem.on_enemy_defeated(enemy.enemy_id)
+    
+    # 生成掉落
+    LootSystem.generate_loot(enemy.loot_table, enemy.global_position)
+```
+
+#### 物品管理器的信号连接
+
+``gdscript
+# ItemManager.gd 中的信号连接
+func _ready():
+    # 监听拾取
+    EventBus.item_picked_up.connect(_on_item_picked_up)
+    EventBus.item_equipped.connect(_on_item_equipped)
+
+func pickup_item(item: Item, player: CharacterBody2D):
+    # 拾取逻辑...
+    
+    # 发出拾取信号
+    EventBus.item_picked_up.emit(item.item_id, item.quantity)
+    
+    # 如果是装备，自动比较
+    if item.item_type == "equipment":
+        var better_slot = find_better_equipment_slot(item)
+        if better_slot:
+            EventBus.ui_notification.emit(
+                "发现更好的装备：%s" % item.item_name,
+                "info"
+            )
+
+func drop_item(item_id: String, position: Vector2, quantity: int = 1):
+    # 生成掉落物...
+    
+    # 发出掉落信号
+    EventBus.item_dropped.emit(item_id, position)
+```
+
+### 4.4 信号发射时机表
+
+| 信号名 | 发射时机 | 发射者 | 主要监听者 |
+|--------|---------|--------|-----------|
+| player_spawned | 玩家实例创建完成 | PlayerManager | UIManager, QuestSystem |
+| player_died | 玩家 HP 归零 | Player | UIManager, EnemyManager, AudioManager |
+| player_level_up | 玩家等级提升 | Player | UIManager, Stats, SkillSystem |
+| damage_dealt | 造成伤害后 | Player/Enemy | DamageMeter, UIManager |
+| damage_taken | 受到伤害后 | Player/Enemy | UIManager, AudioManager |
+| enemy_defeated | 敌人死亡时 | Enemy | Player, QuestSystem, AchievementSystem |
+| item_picked_up | 物品进入背包 | ItemManager | UIManager, InventorySystem |
+| item_equipped | 装备穿戴成功 | InventorySystem | UIManager, Stats |
+| ui_window_opened | UI 窗口显示 | UIManager | GameManager, InputManager |
+| ui_window_closed | UI 窗口关闭 | UIManager | GameManager, InputManager |
+| quest_completed | 任务条件达成 | QuestSystem | UIManager, AchievementSystem |
+| achievement_unlocked | 成就解锁 | AchievementSystem | UIManager, SaveSystem |
+
+### 4.5 信号调试工具
+
+``gdscript
+# SignalDebugger.gd - 信号调试工具
+extends Node
+
+var signal_history: Array[Dictionary] = []
+var max_history_size = 100
+var enabled = false
+
+func _ready():
+    # F9 切换调试模式
+    InputMap.add_action("toggle_signal_debug")
+    InputMap.action_add_event("toggle_signal_debug", InputEventKey.new())
+
+func _input(event):
+    if event.is_action_pressed("toggle_signal_debug"):
+        enabled = !enabled
+        print("信号调试：%s" % ("开启" if enabled else "关闭"))
+
+func track_signal(signal_name: String, emitter: Node, params: Array = []):
+    if not enabled:
+        return
+    
+    signal_history.append({
+        "time": Time.get_ticks_msec(),
+        "signal": signal_name,
+        "emitter": emitter.name,
+        "params": params
+    })
+    
+    # 保持历史记录大小
+    if signal_history.size() > max_history_size:
+        signal_history.pop_front()
+
+func print_recent_signals(count: int = 10):
+    print("最近 %d 个信号:" % count)
+    var start = max(0, signal_history.size() - count)
+    for i in range(start, signal_history.size()):
+        var sig = signal_history[i]
+        print("[%dms] %s from %s" % [sig.time, sig.signal, sig.emitter])
+```
+
+---
+
+*文档版本：v1.0 (2D版)*  
 *创建日期：2026-04-02*  
+*最后更新：2026-04-03*  
 *适用引擎：Godot 4.x*  
 *游戏类型：2D 俯视角 ARPG*
